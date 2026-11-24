@@ -44,6 +44,53 @@ def test_owner_help():
     assert "serve,status,wait,drain" in result.stdout
 
 
+def test_guarded_drain(checkpoint):
+    endpoint = str(checkpoint / "owner.sock")
+
+    def control(op, *args, check=True):
+        return subprocess.run(
+            [*CLI, op, "--endpoint", endpoint, "--timeout", "10", *args],
+            check=check,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+    with subprocess.Popen(
+        [*CLI, "serve", "--model", str(checkpoint), "--endpoint", endpoint, "--generation", GENERATION],
+        stdout=subprocess.DEVNULL,
+    ) as owner:
+        try:
+            control("wait")
+            for option in ("--generation", "--model"):
+                empty = control("drain", option, "", check=False)
+                assert empty.returncode == 2 and "nonempty" in empty.stderr
+                assert shared.request(endpoint, {"op": "status"})["state"] == "ready"
+
+            stale = control("drain", "--generation", "previous", check=False)
+            assert stale.returncode != 0 and "Engram generation mismatch" in stale.stderr
+            assert shared.request(endpoint, {"op": "status"})["state"] == "ready"
+
+            missing = control("drain", "--model", str(checkpoint / "missing"), check=False)
+            assert missing.returncode != 0 and "FileNotFoundError" in missing.stderr
+            assert shared.request(endpoint, {"op": "status"})["state"] == "ready"
+
+            config = checkpoint / "config.json"
+            original = config.read_bytes()
+            config.write_bytes(original + b"\n")
+            wrong_model = control("drain", "--generation", GENERATION, "--model", str(checkpoint), check=False)
+            assert wrong_model.returncode != 0 and "Engram checkpoint mismatch" in wrong_model.stderr
+            assert shared.request(endpoint, {"op": "status"})["state"] == "ready"
+
+            config.write_bytes(original)
+            drained = control("drain", "--generation", GENERATION, "--model", str(checkpoint))
+            assert json.loads(drained.stdout)["state"] == "draining"
+            assert owner.wait(timeout=5) == 0
+        finally:
+            if owner.poll() is None:
+                owner.kill()
+
+
 @pytest.mark.parametrize("fail_load", [False, True])
 def test_load_publishes_only_complete_tables(checkpoint, monkeypatch, fail_load):
     owner = shared.NodeTableOwner(str(checkpoint / "owner.sock"), GENERATION, checkpoint)

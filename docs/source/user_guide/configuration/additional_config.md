@@ -414,6 +414,9 @@ vllm serve /path/to/checkpoint \
 
 Shut down consumers before draining the owner. Graceful worker shutdown
 synchronizes outstanding device reads and releases the table leases.
+Pass `--generation run-1` to `drain` when reusing the socket path across
+deployments. The owner checks the generation and, if supplied with `--model`,
+the checkpoint fingerprint before it stops accepting workers.
 If a worker disconnects without releasing its lease, the owner holds the
 lease until a Linux pidfd reports that the worker has exited. On kernels
 without `SO_PEERPIDFD`, run the owner where consumer PIDs are visible

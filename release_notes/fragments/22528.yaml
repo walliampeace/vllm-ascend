@@ -2,6 +2,8 @@ pr: 22528
 entries:
   - category: feature
     text: >-
-      DeepSeek-V4.1-Flash instances on the same Ascend A5 host can share one
-      copy of their MXFP8 Engram tables. Enable this option with
-      engram_node_shared_endpoint and engram_node_shared_generation.
+      Set engram_node_shared_endpoint and engram_node_shared_generation to
+      share one copy of the MXFP8 Engram tables across DeepSeek-V4.1-Flash
+      instances on the same Ascend A5 host.
+      When reusing an owner socket, pass --generation to drain so an old
+      shutdown command leaves the current generation serving.

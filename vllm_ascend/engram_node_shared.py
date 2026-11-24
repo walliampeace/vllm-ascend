@@ -352,7 +352,13 @@ class NodeTableOwner:
                 if op == "status":
                     _send_json(connection, self.status())
                     return
-                if op == "drain":
+                if op in ("drain", "drain_if_matches"):
+                    if op == "drain_if_matches" and "generation" not in message and "fingerprint" not in message:
+                        raise ValueError("Guarded Engram drain requires a generation or checkpoint")
+                    if "generation" in message and message["generation"] != self.generation:
+                        raise ValueError("Engram generation mismatch")
+                    if "fingerprint" in message and message["fingerprint"] != self.layout["fingerprint"]:
+                        raise ValueError("Engram checkpoint mismatch")
                     if self.state in ("loading", "ready"):
                         self.state = "draining"
                     _send_json(connection, self.status())
@@ -458,18 +464,34 @@ def main():
     parser.add_argument("--model")
     parser.add_argument("--timeout", type=float, default=1800)
     args = parser.parse_args()
+    if args.operation == "drain" and (args.generation == "" or args.model == ""):
+        parser.error("drain requires nonempty values for --generation and --model when supplied")
     if args.operation == "serve":
         if not args.model or not args.generation:
             parser.error("serve requires --model and --generation")
         NodeTableOwner(args.endpoint, args.generation, args.model).serve()
         return
+    message = {"op": "drain" if args.operation == "drain" else "status"}
+    if args.operation == "drain" and (args.generation or args.model):
+        # Older owners reject an unknown operation instead of draining unconditionally.
+        message["op"] = "drain_if_matches"
+        if args.generation:
+            message["generation"] = args.generation
+        if args.model:
+            message["fingerprint"] = checkpoint_layout(args.model)["fingerprint"]
     deadline = time.monotonic() + args.timeout
     while True:
         try:
-            result = request(args.endpoint, {"op": "drain" if args.operation == "drain" else "status"})
+            result = request(args.endpoint, message)
+            if "state" not in result:
+                raise RuntimeError(result["error"])
             if args.generation and result["generation"] != args.generation:
                 raise ValueError("Engram generation mismatch")
-            if args.model and result["fingerprint"] != checkpoint_layout(args.model)["fingerprint"]:
+            if (
+                args.model
+                and args.operation != "drain"
+                and result["fingerprint"] != checkpoint_layout(args.model)["fingerprint"]
+            ):
                 raise ValueError("Engram checkpoint mismatch")
             if args.operation != "wait" or result["state"] == "ready":
                 print(json.dumps(result, indent=2), flush=True)
